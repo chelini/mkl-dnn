@@ -14,15 +14,20 @@
 * limitations under the License.
 *******************************************************************************/
 
-#ifndef CPU_ENGINE_HPP
-#define CPU_ENGINE_HPP
+#ifndef CPU_CPU_ENGINE_HPP
+#define CPU_CPU_ENGINE_HPP
 
 #include <assert.h>
 
 #include "dnnl.h"
 
-#include "../common/engine.hpp"
-#include "c_types_map.hpp"
+#include "common/c_types_map.hpp"
+#include "common/engine.hpp"
+
+#include "cpu/platform.hpp"
+
+#define CPU_INSTANCE(...) &primitive_desc_t::create<__VA_ARGS__::pd_t>,
+#define CPU_INSTANCE_X64(...) DNNL_X64_ONLY(CPU_INSTANCE(__VA_ARGS__))
 
 namespace dnnl {
 namespace impl {
@@ -56,11 +61,11 @@ public:
         : engine_t(engine_kind::cpu, get_default_runtime(engine_kind::cpu)) {}
 
     /* implementation part */
-
     virtual status_t create_memory_storage(memory_storage_t **storage,
             unsigned flags, size_t size, void *handle) override;
 
-    virtual status_t create_stream(stream_t **stream, unsigned flags) override;
+    virtual status_t create_stream(stream_t **stream, unsigned flags,
+            const stream_attr_t *attr) override;
 
     virtual const concat_primitive_desc_create_f *
     get_concat_implementation_list() const override;

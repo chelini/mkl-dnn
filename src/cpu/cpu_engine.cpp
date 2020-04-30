@@ -16,12 +16,12 @@
 
 #include <assert.h>
 
-#include "type_helpers.hpp"
+#include "common/memory.hpp"
+#include "common/type_helpers.hpp"
 
-#include "cpu_engine.hpp"
-#include "cpu_memory_storage.hpp"
-#include "cpu_stream.hpp"
-#include "memory.hpp"
+#include "cpu/cpu_engine.hpp"
+#include "cpu/cpu_memory_storage.hpp"
+#include "cpu/cpu_stream.hpp"
 
 namespace dnnl {
 namespace impl {
@@ -40,8 +40,10 @@ status_t cpu_engine_t::create_memory_storage(
     return status::success;
 }
 
-status_t cpu_engine_t::create_stream(stream_t **stream, unsigned flags) {
-    return safe_ptr_assign<stream_t>(*stream, new cpu_stream_t(this, flags));
+status_t cpu_engine_t::create_stream(
+        stream_t **stream, unsigned flags, const stream_attr_t *attr) {
+    return safe_ptr_assign<stream_t>(
+            *stream, new cpu_stream_t(this, flags, attr));
 }
 
 } // namespace cpu

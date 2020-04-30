@@ -23,6 +23,7 @@
 #include "c_types_map.hpp"
 #include "engine.hpp"
 #include "memory_desc_wrapper.hpp"
+#include "stream.hpp"
 #include "type_helpers.hpp"
 #include "utils.hpp"
 
@@ -75,7 +76,6 @@ dnnl_memory::dnnl_memory(dnnl::impl::engine_t *engine,
     memory_storage_t *memory_storage_ptr;
     status_t status = engine->create_memory_storage(
             &memory_storage_ptr, flags, size, handle);
-    assert(status == success);
     if (status != success) return;
 
     memory_storage_.reset(memory_storage_ptr);
@@ -508,8 +508,16 @@ status_t dnnl_memory_get_data_handle(const memory_t *memory, void **handle) {
 }
 
 status_t dnnl_memory_set_data_handle(memory_t *memory, void *handle) {
+    return dnnl_memory_set_data_handle_v2(memory, handle, nullptr);
+}
+
+status_t dnnl_memory_set_data_handle_v2(
+        memory_t *memory, void *handle, stream_t *stream) {
     if (any_null(memory)) return invalid_arguments;
-    return memory->set_data_handle(handle);
+    if (stream) stream->before_exec_hook();
+    status_t status = memory->set_data_handle(handle);
+    if (stream) stream->after_exec_hook();
+    return status;
 }
 
 status_t dnnl_memory_map_data(const memory_t *memory, void **mapped_ptr) {

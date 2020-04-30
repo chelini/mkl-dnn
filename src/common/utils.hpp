@@ -14,8 +14,8 @@
 * limitations under the License.
 *******************************************************************************/
 
-#ifndef UTILS_HPP
-#define UTILS_HPP
+#ifndef COMMON_UTILS_HPP
+#define COMMON_UTILS_HPP
 
 #include <cassert>
 #include <cstddef>
@@ -26,10 +26,6 @@
 
 #include <memory>
 #include <string>
-
-#if defined(__x86_64__) || defined(_M_X64)
-#define DNNL_X86_64
-#endif
 
 #define MSAN_ENABLED 0
 #define ATTR_NO_MSAN
@@ -65,7 +61,7 @@ namespace impl {
     T &operator=(const T &) = delete;
 
 // Sanity check for 64 bits
-static_assert(sizeof(void *) == 8, "DNNL supports 64 bit only");
+static_assert(sizeof(void *) == 8, "oneDNN supports 64-bit architectures only");
 
 #define CHECK(f) \
     do { \
@@ -82,7 +78,7 @@ namespace utils {
  * Rationale: msvs c++ (and even some c) headers contain special pragma that
  * injects msvs-version check into object files in order to abi-mismatches
  * during the static linking. This makes sense if e.g. std:: objects are passed
- * through between application and library, which is not the case for DNNL
+ * through between application and library, which is not the case for oneDNN
  * (since there is no any c++-rt dependent stuff, ideally...). */
 
 /* SFINAE helper -- analogue to std::enable_if */
@@ -499,6 +495,7 @@ bool get_jit_dump();
 unsigned get_jit_profiling_flags();
 std::string get_jit_profiling_jitdumpdir();
 FILE *fopen(const char *filename, const char *mode);
+int getpagesize();
 
 constexpr int msan_enabled = MSAN_ENABLED;
 inline void msan_unpoison(void *ptr, size_t size) {
