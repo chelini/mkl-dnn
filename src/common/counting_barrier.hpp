@@ -18,6 +18,7 @@
 #define COMMON_COUNTING_BARRIER_HPP
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -27,8 +28,8 @@ namespace dnnl {
 namespace impl {
 
 // Similar to https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/platform/blocking_counter.h
-struct counting_barrier {
-    counting_barrier(unsigned size = 0) { init(size); }
+struct counting_barrier_t {
+    counting_barrier_t(unsigned size = 0) { init(size); }
 
     void init(unsigned size) {
         assert(size < waiter_mask_);

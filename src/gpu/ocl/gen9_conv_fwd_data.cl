@@ -217,10 +217,10 @@ int wei_idx(int oc_outer, int ic_outer) {
 // Layout is:
 // - cwn[16c] for NCdhw16n16c (16c is mapped to sub-group)
 // - ncw[16c] for nCdhw16c (16c is mapped to sub-group)
-int dst_idx(int mb_block, int oc_outer, int ow_inner) {
+int dst_idx(int mb_block, int oc_outer, int ow_block) {
     if (DST_16N16C)
-        return oc_outer * OW_BLOCK * MB_BLOCK + ow_inner * MB_BLOCK + mb_block;
-    return mb_block * OC_OUTER * OW_BLOCK + oc_outer * OW_BLOCK + ow_inner;
+        return oc_outer * OW_BLOCK * MB_BLOCK + ow_block * MB_BLOCK + mb_block;
+    return mb_block * OC_OUTER * OW_BLOCK + oc_outer * OW_BLOCK + ow_block;
 }
 
 #define copy(dst, src, n) \
@@ -286,7 +286,8 @@ int dst_idx(int mb_block, int oc_outer, int ow_inner) {
     do { \
         int b_off = wei_idx((oc_outer), (ic_outer)); \
         int c_off = dst_idx((mb_block), (oc_outer), (ow_outer)); \
-        for (int ic_inner = 0; ic_inner < IC_INNER; ic_inner++) { \
+        for (int ic_inner = 0; ic_inner < min(IC_WO_PADDING, IC_INNER); \
+                ic_inner++) { \
             (C)[c_off] = fma(intel_sub_group_shuffle((A), ic_inner), \
                     (B)[b_off + ic_inner], (C)[c_off]); \
         } \
@@ -357,7 +358,8 @@ int dst_idx(int mb_block, int oc_outer, int ow_inner) {
                     for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++) { \
                         int b_off = wei_idx(oc_outer, ic_outer); \
                         int c_off = dst_idx(mb_block, oc_outer, i); \
-                        for (int ic_inner = 0; ic_inner < IC_INNER; \
+                        for (int ic_inner = 0; \
+                                ic_inner < min(IC_WO_PADDING, IC_INNER); \
                                 ic_inner++) { \
                             (C)[c_off] = fma( \
                                     intel_sub_group_shuffle(A, ic_inner), \
@@ -411,28 +413,31 @@ int dst_idx(int mb_block, int oc_outer, int ow_inner) {
 #define read_wei_block(block, ptr) \
     do { \
         for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++) { \
-            for (int ic_block = 0; ic_block < IC_BLOCK; ic_block += 16) { \
+            int ic_bound = min(IC_WO_PADDING, IC_BLOCK); \
+            for (int ic_block = 0; ic_block < ic_bound; ic_block += 16) { \
                 int off = wei_off(0, oc_outer * 16, ic_block, 0, 0, 0); \
                 int idx = wei_idx(oc_outer, ic_block); \
-                unrolled_read(min(16, IC_BLOCK), &(block)[idx], &(ptr)[off]); \
+                unrolled_read(min(16, ic_bound - ic_block), &(block)[idx], \
+                        &(ptr)[off]); \
             } \
         } \
     } while (0)
 
-#define read_wei_and_multiply_c_vec(wei1, kw, C, A) \
+#define read_wei_and_multiply_c_vec(wei, kw, C, A) \
     do { \
         for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++) { \
-            for (int ic_block = 0; ic_block < IC_BLOCK; ic_block += 8) { \
-                int ic_bound = min(8, IC_BLOCK - ic_block); \
+            int ic_bound1 = min(IC_WO_PADDING, IC_BLOCK); \
+            for (int ic_block = 0; ic_block < ic_bound1; ic_block += 8) { \
+                int ic_bound2 = min(8, ic_bound1 - ic_block); \
                 int off = wei_off(0, oc_outer * 16, ic_block, 0, 0, 0); \
                 DATA_T B[8]; \
-                unrolled_read(ic_bound, B, &(wei1)[off]); \
+                unrolled_read(ic_bound2, B, &(wei)[off]); \
                 for (int mb_block = 0; mb_block < MB_BLOCK; mb_block++) { \
                     for (int ow_block = 0; ow_block < OW_BLOCK; ow_block++) { \
                         int iw_off = ow_block * SW + (kw) * (1 + DW); \
                         int buf_idx = src_buf_idx(mb_block, 0, iw_off); \
                         int c_off = dst_idx(mb_block, oc_outer, ow_block); \
-                        for (int i = 0; i < ic_bound; i++) { \
+                        for (int i = 0; i < ic_bound2; i++) { \
                             (C)[c_off] \
                                     = fma(intel_sub_group_shuffle( \
                                                   (A)[buf_idx], ic_block + i), \
@@ -460,17 +465,18 @@ DATA_T shuffle_a_value(int mb_block, int ic_block, int ow_outer, int ow_inner,
     return A_shuf[iw_outer - iw_outer0];
 }
 
-#define read_wei_and_multiply_w_vec(wei1, kw, C, A) \
+#define read_wei_and_multiply_w_vec(wei, kw, C, A) \
     do { \
         for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++) { \
-            for (int ic_block = 0; ic_block < IC_BLOCK; ic_block += 8) { \
-                int ic_bound = min(8, IC_BLOCK - ic_block); \
+            int ic_bound1 = min(IC_WO_PADDING, IC_BLOCK); \
+            for (int ic_block = 0; ic_block < ic_bound1; ic_block += 8) { \
+                int ic_bound2 = min(8, ic_bound1 - ic_block); \
                 int off = wei_off(0, oc_outer * 16, ic_block, 0, 0, 0); \
                 DATA_T B[8]; \
-                unrolled_read(min(8, IC_BLOCK), B, &(wei1)[off]); \
+                unrolled_read(ic_bound2, B, &(wei)[off]); \
                 for (int mb_block = 0; mb_block < MB_BLOCK; mb_block++) \
                     /*  IC_INNER is 1 with W vectorization. */ \
-                    for (int ic_inner = 0; ic_inner < ic_bound; ic_inner++) \
+                    for (int ic_inner = 0; ic_inner < ic_bound2; ic_inner++) \
                         for (int ow_outer = 0; ow_outer < OW_OUTER; \
                                 ow_outer++) { \
                             int ow_bound = min( \
@@ -489,12 +495,12 @@ DATA_T shuffle_a_value(int mb_block, int ic_block, int ow_outer, int ow_inner,
         } \
     } while (0)
 
-#define read_wei_and_multiply(wei1, kw, C, A) \
+#define read_wei_and_multiply(wei, kw, C, A) \
     do { \
         if (W_VEC) \
-            read_wei_and_multiply_w_vec((wei1), (kw), (C), (A)); \
+            read_wei_and_multiply_w_vec((wei), (kw), (C), (A)); \
         else \
-            read_wei_and_multiply_c_vec((wei1), (kw), (C), (A)); \
+            read_wei_and_multiply_c_vec((wei), (kw), (C), (A)); \
     } while (0)
 
 // Read MB_BLOCK x OC_BLOCK x OW_BLOCK block of dst.
@@ -504,10 +510,10 @@ DATA_T shuffle_a_value(int mb_block, int ic_block, int ow_outer, int ow_inner,
                 = (OW % OW_BLOCK == 0) ? OW_BLOCK : min(OW_BLOCK, OW - (ow)); \
         for (int mb_block = 0; mb_block < MB_BLOCK; mb_block++) \
             for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++) \
-                for (int ow_inner = 0; ow_inner < ow_bound; ow_inner++) { \
+                for (int ow_block = 0; ow_block < ow_bound; ow_block++) { \
                     int off = dst_off( \
-                            mb_block, oc_outer * 16, 0, 0, ow_inner); \
-                    int idx = dst_idx(mb_block, oc_outer, ow_inner); \
+                            mb_block, oc_outer * 16, 0, 0, ow_block); \
+                    int idx = dst_idx(mb_block, oc_outer, ow_block); \
                     (block)[idx] = _BLOCK_READ(&(ptr)[off]); \
                 } \
     } while (0)
@@ -529,13 +535,13 @@ DATA_T shuffle_a_value(int mb_block, int ic_block, int ow_outer, int ow_inner,
         } else if (DST_16N16C) { \
             int ow_bound = (OW % OW_BLOCK == 0) ? OW_BLOCK \
                                                 : min(OW_BLOCK, OW - (ow)); \
-            for (int ow_inner = 0; ow_inner < ow_bound; ow_inner++) \
+            for (int ow_block = 0; ow_block < ow_bound; ow_block++) \
                 for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++) \
                     for (int mb_block = 0; mb_block < MB_BLOCK; \
                             mb_block += 16) { \
                         int off = dst_off( \
-                                mb_block, oc_outer * 16, 0, 0, ow_inner); \
-                        int idx = dst_idx(mb_block, oc_outer, ow_inner); \
+                                mb_block, oc_outer * 16, 0, 0, ow_block); \
+                        int idx = dst_idx(mb_block, oc_outer, ow_block); \
                         unrolled_write(min(16, MB_BLOCK), &(block)[idx], \
                                 &(ptr)[off]); \
                     } \
@@ -653,8 +659,8 @@ gen9_conv_fwd(const __global DATA_T *src, const __global DATA_T *wei,
     DATA_T C[MB_BLOCK * OC_OUTER * OW_BLOCK] = {0};
     for (int mb_block = 0; mb_block < MB_BLOCK; mb_block++)
         for (int oc_outer = 0; oc_outer < OC_OUTER; oc_outer++)
-            for (int ow_inner = 0; ow_inner < OW_BLOCK; ow_inner++) {
-                int c_off = dst_idx(mb_block, oc_outer, ow_inner);
+            for (int ow_block = 0; ow_block < OW_BLOCK; ow_block++) {
+                int c_off = dst_idx(mb_block, oc_outer, ow_block);
                 C[c_off] = WITH_BIAS
                         ? bia[g * OC + oc + oc_outer * 16 + local_id]
                         : 0;
