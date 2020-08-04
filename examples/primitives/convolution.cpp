@@ -37,11 +37,19 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "dnnl.hpp"
 #include "example_utils.hpp"
 
 using namespace dnnl;
+
+#define INIT_TIMER auto start = std::chrono::high_resolution_clock::now();
+#define START_TIMER  start = std::chrono::high_resolution_clock::now();
+#define STOP_TIMER(name)  std::cout << "RUNTIME of " << name << ": " << \
+    std::chrono::duration_cast<std::chrono::milliseconds>( \
+            std::chrono::high_resolution_clock::now()-start \
+    ).count() << " ms " << std::endl; 
 
 using tag = memory::format_tag;
 using dt = memory::data_type;
@@ -55,19 +63,19 @@ void convolution_example(dnnl::engine::kind engine_kind) {
     dnnl::stream engine_stream(engine);
 
     // Tensor dimensions.
-    const memory::dim N = 3, // batch size
-            IC = 32, // input channels
-            IH = 13, // input height
-            IW = 13, // input width
-            OC = 64, // output channels
-            KH = 3, // weights height
-            KW = 3, // weights width
-            PH_L = 1, // height padding: left
-            PH_R = 1, // height padding: right
-            PW_L = 1, // width padding: left
-            PW_R = 1, // width padding: right
-            SH = 4, // height-wise stride
-            SW = 4, // width-wise stride
+    const memory::dim N = 1, // batch size
+            IC = 1, // input channels
+            IH = 1024, // input height
+            IW = 1024, // input width
+            OC = 1, // output channels
+            KH = 32, // weights height
+            KW = 32, // weights width
+            PH_L = 0, // height padding: left
+            PH_R = 0, // height padding: right
+            PW_L = 0, // width padding: left
+            PW_R = 0, // width padding: right
+            SH = 2, // height-wise stride
+            SW = 2, // width-wise stride
             OH = (IH - KH + PH_L + PH_R) / SH + 1, // output height
             OW = (IW - KW + PW_L + PW_R) / SW + 1; // output width
 
@@ -75,7 +83,6 @@ void convolution_example(dnnl::engine::kind engine_kind) {
     // dimensions.
     memory::dims src_dims = {N, IC, IH, IW};
     memory::dims weights_dims = {OC, IC, KH, KW};
-    memory::dims bias_dims = {OC};
     memory::dims dst_dims = {N, OC, OH, OW};
 
     // Strides, padding dimensions.
@@ -86,7 +93,6 @@ void convolution_example(dnnl::engine::kind engine_kind) {
     // Allocate buffers.
     std::vector<float> src_data(product(src_dims));
     std::vector<float> weights_data(product(weights_dims));
-    std::vector<float> bias_data(OC);
     std::vector<float> dst_data(product(dst_dims));
 
     // Initialize src, weights, and dst tensors.
@@ -97,11 +103,7 @@ void convolution_example(dnnl::engine::kind engine_kind) {
     std::generate(weights_data.begin(), weights_data.end(), []() {
         static int i = 0;
         return std::sin(i++ * 2.f);
-    });
-    std::generate(bias_data.begin(), bias_data.end(), []() {
-        static int i = 0;
-        return std::tanh(i++);
-    });
+    }); 
 
     // Create memory objects for tensor data (src, weights, dst). In this
     // example, NCHW layout is assumed for src and dst, and OIHW for weights.
@@ -117,33 +119,19 @@ void convolution_example(dnnl::engine::kind engine_kind) {
     auto conv_weights_md = memory::desc(weights_dims, dt::f32, tag::any);
     auto conv_dst_md = memory::desc(dst_dims, dt::f32, tag::any);
 
-    // Create memory descriptor and memory object for input bias.
-    auto user_bias_md = memory::desc(bias_dims, dt::f32, tag::a);
-    auto user_bias_mem = memory(user_bias_md, engine);
-
     // Write data to memory object's handle.
     write_to_dnnl_memory(src_data.data(), user_src_mem);
     write_to_dnnl_memory(weights_data.data(), user_weights_mem);
-    write_to_dnnl_memory(bias_data.data(), user_bias_mem);
 
     // Create operation descriptor.
     auto conv_desc = convolution_forward::desc(prop_kind::forward_training,
             algorithm::convolution_direct, conv_src_md, conv_weights_md,
-            user_bias_md, conv_dst_md, strides_dims, padding_dims_l,
+            conv_dst_md, strides_dims, padding_dims_l,
             padding_dims_r);
-
-    // Create primitive post-ops (ReLU).
-    const float scale = 1.f;
-    const float alpha = 0.f;
-    const float beta = 0.f;
-    post_ops conv_ops;
-    conv_ops.append_eltwise(scale, algorithm::eltwise_relu, alpha, beta);
-    primitive_attr conv_attr;
-    conv_attr.set_post_ops(conv_ops);
 
     // Create primitive descriptor.
     auto conv_pd
-            = convolution_forward::primitive_desc(conv_desc, conv_attr, engine);
+            = convolution_forward::primitive_desc(conv_desc, engine);
 
     // For now, assume that the src, weights, and dst memory layouts generated
     // by the primitive and the ones provided by the user are identical.
@@ -179,11 +167,13 @@ void convolution_example(dnnl::engine::kind engine_kind) {
     std::unordered_map<int, memory> conv_args;
     conv_args.insert({DNNL_ARG_SRC, conv_src_mem});
     conv_args.insert({DNNL_ARG_WEIGHTS, conv_weights_mem});
-    conv_args.insert({DNNL_ARG_BIAS, user_bias_mem});
     conv_args.insert({DNNL_ARG_DST, conv_dst_mem});
 
     // Primitive execution: convolution with ReLU.
+    INIT_TIMER
+    START_TIMER
     conv_prim.execute(engine_stream, conv_args);
+    STOP_TIMER("convolution")
 
     // Reorder the data in case the dst memory descriptor generated by the
     // primitive and the one provided by the user are different.
